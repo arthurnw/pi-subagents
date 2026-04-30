@@ -8,6 +8,7 @@ import { AgentManagerComponent, type ManagerResult } from "../manager-ui/agent-m
 import { SubagentsStatusComponent } from "../tui/subagents-status.ts";
 import { discoverAvailableSkills } from "../agents/skills.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
+import { interruptRunById } from "../runs/shared/interrupt-run.ts";
 import { isParallelStep, type ChainStep } from "../shared/settings.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import {
@@ -117,6 +118,18 @@ const discoverSavedChains = (cwd: string): ChainConfig[] => {
 		chainsByName.set(chain.name, chain);
 	}
 	return Array.from(chainsByName.values());
+};
+
+const makeRunIdCompletions = (state: SubagentState) => (prefix: string) => {
+	if (prefix.includes(" ")) return null;
+	const ids = new Set<string>();
+	for (const job of state.asyncJobs.values()) {
+		if (job.status === "running" || job.status === "queued") ids.add(job.asyncId);
+	}
+	for (const control of state.foregroundControls.values()) ids.add(control.runId);
+	return Array.from(ids)
+		.filter((id) => id.startsWith(prefix))
+		.map((id) => ({ value: id, label: id }));
 };
 
 const makeChainCompletions = (state: SubagentState) => (prefix: string) => {
@@ -582,6 +595,16 @@ export function registerSlashCommands(
 		description: "Show subagent diagnostics",
 		handler: async (_args, ctx) => {
 			await runSlashSubagent(pi, ctx, { action: "doctor" });
+		},
+	});
+
+	pi.registerCommand("subagents-kill", {
+		description: "Interrupt (soft-pause) a subagent run by id; defaults to most recent",
+		getArgumentCompletions: makeRunIdCompletions(state),
+		handler: async (args, ctx) => {
+			const runId = args.trim() || undefined;
+			const result = interruptRunById(state, runId);
+			ctx.ui.notify(result.message, result.ok ? "info" : "error");
 		},
 	});
 

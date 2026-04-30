@@ -5,6 +5,7 @@ import type { Component, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { type AsyncRunOverlayData, type AsyncRunSummary, formatAsyncRunProgressLabel, listAsyncRunsForOverlay } from "../runs/background/async-status.ts";
 import { ASYNC_DIR, type SubagentState } from "../shared/types.ts";
+import { interruptRunById } from "../runs/shared/interrupt-run.ts";
 import { formatDuration, formatTokens, shortenPath } from "../shared/formatters.ts";
 import { formatScrollInfo, renderFooter, renderHeader, row } from "./render-helpers.ts";
 
@@ -191,6 +192,7 @@ export class SubagentsStatusComponent implements Component {
 	private recent: AsyncRunSummary[] = [];
 	private rows: StatusRow[] = [];
 	private errorMessage?: string;
+	private statusMessage?: { text: string; level: "info" | "error"; expiresAt: number };
 	private tui: TUI;
 	private theme: Theme;
 	private done: () => void;
@@ -384,12 +386,32 @@ export class SubagentsStatusComponent implements Component {
 		const above = this.detailScrollOffset;
 		const below = Math.max(0, body.length - (this.detailScrollOffset + visibleBody.length));
 		const scrollInfo = formatScrollInfo(above, below);
+		const activeStatus = this.statusMessage && this.statusMessage.expiresAt > Date.now() ? this.statusMessage : undefined;
+		const statusLine = activeStatus
+			? row(this.theme.fg(activeStatus.level === "error" ? "error" : "accent", truncateToWidth(activeStatus.text, innerW)), width, this.theme)
+			: undefined;
 		return [
 			renderHeader(`Subagent Run ${run.id.slice(0, 8)}`, width, this.theme),
 			...visibleBody,
 			scrollInfo ? row(this.theme.fg("dim", scrollInfo), width, this.theme) : row("", width, this.theme),
-			renderFooter(" ↑↓ scroll  esc summary  q close  read-only detail ", width, this.theme),
+			...(statusLine ? [statusLine] : []),
+			renderFooter(" ↑↓ scroll  k kill  esc summary  q close ", width, this.theme),
 		];
+	}
+
+	private interruptSelected(): void {
+		const run = this.screen === "detail"
+			? this.rows.find((row) => row.kind === "run" && row.run?.id === this.detailRunId)?.run
+			: selectedRun(this.rows, this.cursor);
+		if (!run || !this.state) {
+			this.statusMessage = { text: "No run to interrupt.", level: "error", expiresAt: Date.now() + 4000 };
+			this.tui.requestRender();
+			return;
+		}
+		const result = interruptRunById(this.state, run.id);
+		this.statusMessage = { text: result.message, level: result.ok ? "info" : "error", expiresAt: Date.now() + 4000 };
+		this.reload();
+		this.tui.requestRender();
 	}
 
 	handleInput(data: string): void {
@@ -401,6 +423,10 @@ export class SubagentsStatusComponent implements Component {
 		}
 		if (matchesKey(data, "escape") || matchesKey(data, "q") || matchesKey(data, "ctrl+c")) {
 			this.done();
+			return;
+		}
+		if (matchesKey(data, "k")) {
+			this.interruptSelected();
 			return;
 		}
 		if (this.screen === "detail") {
@@ -480,7 +506,10 @@ export class SubagentsStatusComponent implements Component {
 		if (scrollInfo) lines.push(row(this.theme.fg("dim", scrollInfo), w, this.theme));
 		else lines.push(row("", w, this.theme));
 
-		if (this.errorMessage) {
+		const activeStatus = this.statusMessage && this.statusMessage.expiresAt > Date.now() ? this.statusMessage : undefined;
+		if (activeStatus) {
+			lines.push(row(this.theme.fg(activeStatus.level === "error" ? "error" : "accent", truncateToWidth(activeStatus.text, innerW)), w, this.theme));
+		} else if (this.errorMessage) {
 			lines.push(row(this.theme.fg("error", truncateToWidth(this.errorMessage, innerW)), w, this.theme));
 		} else if (selected) {
 			lines.push(row(this.theme.fg("accent", `Selected: ${selected.id}`), w, this.theme));
@@ -489,7 +518,7 @@ export class SubagentsStatusComponent implements Component {
 			lines.push(row(this.theme.fg("dim", "No runs selected."), w, this.theme));
 		}
 
-		const footer = `↑↓ select  enter detail  esc close  summary view  ${this.active.length} active / ${this.recent.length} recent`;
+		const footer = `↑↓ select  enter detail  k kill  esc close  ${this.active.length} active / ${this.recent.length} recent`;
 		lines.push(renderFooter(truncateToWidth(footer, innerW), w, this.theme));
 		return lines;
 	}

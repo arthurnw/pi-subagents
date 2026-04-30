@@ -15,6 +15,7 @@ import { runSync } from "./execution.ts";
 import { resolveModelCandidate } from "../shared/model-fallback.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { recordRun } from "../shared/run-history.ts";
+import { interruptRunById } from "../shared/interrupt-run.ts";
 import {
 	buildChainInstructions,
 	writeInitialProgressFile,
@@ -32,7 +33,7 @@ import { createForkContextResolver } from "../../shared/fork-context.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
-import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd } from "../../shared/utils.ts";
+import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd } from "../../shared/utils.ts";
 import {
 	buildSubagentResultIntercomPayload,
 	deliverSubagentIntercomMessageEvent,
@@ -78,7 +79,6 @@ import {
 	wrapForkTask,
 } from "../../shared/types.ts";
 
-const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 
 interface TaskParam {
 	agent: string;
@@ -203,21 +203,6 @@ function foregroundStatusResult(control: SubagentState["foregroundControls"] ext
 	return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "management", results: [] } };
 }
 
-function getAsyncInterruptTarget(state: SubagentState, runId: string | undefined): { asyncId: string; asyncDir: string } | undefined {
-	if (runId) {
-		const direct = state.asyncJobs.get(runId);
-		if (direct) return { asyncId: direct.asyncId, asyncDir: direct.asyncDir };
-	}
-	let newest: { asyncId: string; asyncDir: string; updatedAt: number } | undefined;
-	for (const job of state.asyncJobs.values()) {
-		if (job.status !== "running") continue;
-		if (!newest || (job.updatedAt ?? 0) > newest.updatedAt) {
-			newest = { asyncId: job.asyncId, asyncDir: job.asyncDir, updatedAt: job.updatedAt ?? 0 };
-		}
-	}
-	return newest ? { asyncId: newest.asyncId, asyncDir: newest.asyncDir } : undefined;
-}
-
 function emitControlNotification(input: {
 	pi: ExtensionAPI;
 	controlConfig: ResolvedControlConfig;
@@ -243,38 +228,6 @@ function emitControlNotification(input: {
 			to: input.intercomBridge.orchestratorTarget,
 			message: formatControlIntercomMessage(input.event, childIntercomTarget),
 		});
-	}
-}
-
-function interruptAsyncRun(state: SubagentState, runId: string | undefined): AgentToolResult<Details> | null {
-	const target = getAsyncInterruptTarget(state, runId);
-	if (!target) return null;
-	const status = readStatus(target.asyncDir);
-	if (!status || status.state !== "running" || typeof status.pid !== "number") {
-		return {
-			content: [{ type: "text", text: `No running async run with an interrupt-capable pid was found for '${runId ?? "current"}'.` }],
-			isError: true,
-			details: { mode: "management", results: [] },
-		};
-	}
-	try {
-		process.kill(status.pid, ASYNC_INTERRUPT_SIGNAL);
-		const tracked = state.asyncJobs.get(target.asyncId);
-		if (tracked) {
-			tracked.activityState = undefined;
-			tracked.updatedAt = Date.now();
-		}
-		return {
-			content: [{ type: "text", text: `Interrupt requested for async run ${target.asyncId}.` }],
-			details: { mode: "management", results: [] },
-		};
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return {
-			content: [{ type: "text", text: `Failed to interrupt async run ${target.asyncId}: ${message}` }],
-			isError: true,
-			details: { mode: "management", results: [] },
-		};
 	}
 }
 
@@ -1901,28 +1854,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (params.action === "interrupt") {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
-				const foreground = getForegroundControl(deps.state, targetRunId);
-				if (foreground?.interrupt) {
-					const interrupted = foreground.interrupt();
-					if (interrupted) {
-						foreground.updatedAt = Date.now();
-						foreground.currentActivityState = undefined;
-						return {
-							content: [{ type: "text", text: `Interrupt requested for foreground run ${foreground.runId}.` }],
-							details: { mode: "management", results: [] },
-						};
-					}
-					return {
-						content: [{ type: "text", text: `Foreground run ${foreground.runId} has no active child step to interrupt.` }],
-						isError: true,
-						details: { mode: "management", results: [] },
-					};
-				}
-				const asyncInterruptResult = interruptAsyncRun(deps.state, targetRunId);
-				if (asyncInterruptResult) return asyncInterruptResult;
+				const result = interruptRunById(deps.state, targetRunId);
 				return {
-					content: [{ type: "text", text: "No interrupt-capable run found in this session." }],
-					isError: true,
+					content: [{ type: "text", text: result.message }],
+					...(result.ok ? {} : { isError: true }),
 					details: { mode: "management", results: [] },
 				};
 			}

@@ -104,7 +104,7 @@ describe("SubagentsStatusComponent", () => {
 			assert.ok(output.includes(`output: ${path.join("/tmp/run-a", "output-0.log")}`));
 			assert.ok(output.includes(`session: ${path.join("/tmp/run-a", "session.jsonl")}`));
 			assert.match(output, /0 active \/ 1 recent/);
-			assert.match(output, /summary view/);
+			assert.match(output, /k kill/);
 			assert.ok(renderRequests >= 1, "expected auto-refresh to request a render");
 		} finally {
 			component.dispose();
@@ -149,7 +149,7 @@ describe("SubagentsStatusComponent", () => {
 				assert.match(detail, /asyncDir:/);
 				assert.match(detail, /outputFile:/);
 				assert.match(detail, /sessionFile:/);
-				assert.match(detail, /read-only detail/);
+				assert.match(detail, /k kill/);
 				assert.match(detail, /↓ \d+ more/);
 				assert.equal(renderRequests, 1);
 
