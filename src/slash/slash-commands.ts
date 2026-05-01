@@ -572,7 +572,7 @@ export function registerSlashCommands(
 		description: "Show active and recent async subagent runs",
 		handler: async (_args, ctx) => {
 			await ctx.ui.custom<void>(
-				(tui, theme, _kb, done) => new SubagentsStatusComponent(tui, theme, () => done(undefined)),
+				(tui, theme, _kb, done) => new SubagentsStatusComponent(tui, theme, () => done(undefined), { state }),
 				{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
 			);
 		},

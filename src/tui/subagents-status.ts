@@ -4,7 +4,7 @@ import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { type AsyncRunOverlayData, type AsyncRunSummary, formatAsyncRunProgressLabel, listAsyncRunsForOverlay } from "../runs/background/async-status.ts";
-import { ASYNC_DIR } from "../shared/types.ts";
+import { ASYNC_DIR, type SubagentState } from "../shared/types.ts";
 import { formatDuration, formatTokens, shortenPath } from "../shared/formatters.ts";
 import { formatScrollInfo, renderFooter, renderHeader, row } from "./render-helpers.ts";
 
@@ -23,6 +23,7 @@ interface StatusRow {
 interface StatusOverlayDeps {
 	listRunsForOverlay?: (asyncDirRoot: string, recentLimit?: number) => AsyncRunOverlayData;
 	refreshMs?: number;
+	state?: SubagentState;
 }
 
 function statusColor(theme: Theme, status: AsyncRunSummary["state"]): string {
@@ -179,6 +180,7 @@ export class SubagentsStatusComponent implements Component {
 	private readonly width = 84;
 	private readonly viewportHeight = 12;
 	private readonly listRunsForOverlay: (asyncDirRoot: string, recentLimit?: number) => AsyncRunOverlayData;
+	private readonly state?: SubagentState;
 	private readonly refreshTimer: NodeJS.Timeout;
 	private screen: "list" | "detail" = "list";
 	private cursor = 0;
@@ -203,6 +205,7 @@ export class SubagentsStatusComponent implements Component {
 		this.theme = theme;
 		this.done = done;
 		this.listRunsForOverlay = deps.listRunsForOverlay ?? listAsyncRunsForOverlay;
+		this.state = deps.state;
 		const refreshMs = deps.refreshMs ?? AUTO_REFRESH_MS;
 		this.reload();
 		this.refreshTimer = setInterval(() => {
@@ -216,8 +219,13 @@ export class SubagentsStatusComponent implements Component {
 		const previousSelectedId = selectedRun(this.rows, this.cursor)?.id;
 		try {
 			const overlayData = this.listRunsForOverlay(ASYNC_DIR, 5);
-			this.active = overlayData.active;
-			this.recent = overlayData.recent;
+			// Filter to runs spawned from this pi session. state.asyncJobs is
+			// cleared on session_start so its keys identify "this session".
+			// When no state is wired in, fall back to the legacy global view.
+			const sessionIds = this.state?.asyncJobs;
+			const inSession = (run: AsyncRunSummary) => !sessionIds || sessionIds.has(run.id);
+			this.active = overlayData.active.filter(inSession);
+			this.recent = overlayData.recent.filter(inSession);
 			this.rows = buildRows(this.active, this.recent);
 			this.errorMessage = undefined;
 			this.restoreSelection(previousSelectedId);
