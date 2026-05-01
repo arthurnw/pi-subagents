@@ -64,6 +64,46 @@ function selectedRun(rows: StatusRow[], cursor: number): AsyncRunSummary | undef
 	return index >= 0 ? runRows[index]?.run : undefined;
 }
 
+/**
+ * Build synthetic AsyncRunSummary rows for in-memory foreground (sync)
+ * subagent runs. Sync runs never write status.json, so they are invisible
+ * to the disk-backed overlay listing.
+ */
+function foregroundRunsAsSummaries(state: SubagentState | undefined): AsyncRunSummary[] {
+	if (!state?.foregroundControls?.size) return [];
+	const out: AsyncRunSummary[] = [];
+	for (const control of state.foregroundControls.values()) {
+		const stepIndex = control.currentIndex ?? 0;
+		const steps = control.currentAgent
+			? [{
+				index: stepIndex,
+				agent: control.currentAgent,
+				status: "running",
+				...(control.currentActivityState ? { activityState: control.currentActivityState } : {}),
+				...(control.lastActivityAt ? { lastActivityAt: control.lastActivityAt } : {}),
+				...(control.currentTool ? { currentTool: control.currentTool } : {}),
+				...(control.currentToolStartedAt ? { currentToolStartedAt: control.currentToolStartedAt } : {}),
+			}]
+			: [];
+		out.push({
+			id: control.runId,
+			asyncDir: "",
+			state: "running",
+			activityState: control.currentActivityState,
+			lastActivityAt: control.lastActivityAt,
+			currentTool: control.currentTool,
+			currentToolStartedAt: control.currentToolStartedAt,
+			mode: control.mode === "parallel" ? "chain" : control.mode,
+			cwd: state.baseCwd,
+			startedAt: control.startedAt,
+			lastUpdate: control.updatedAt,
+			currentStep: stepIndex,
+			steps,
+		});
+	}
+	return out;
+}
+
 function buildRows(active: AsyncRunSummary[], recent: AsyncRunSummary[]): StatusRow[] {
 	const rows: StatusRow[] = [];
 	if (active.length > 0) {
@@ -224,7 +264,8 @@ export class SubagentsStatusComponent implements Component {
 			// When no state is wired in, fall back to the legacy global view.
 			const sessionIds = this.state?.asyncJobs;
 			const inSession = (run: AsyncRunSummary) => !sessionIds || sessionIds.has(run.id);
-			this.active = overlayData.active.filter(inSession);
+			const foreground = foregroundRunsAsSummaries(this.state);
+			this.active = [...foreground, ...overlayData.active.filter(inSession)];
 			this.recent = overlayData.recent.filter(inSession);
 			this.rows = buildRows(this.active, this.recent);
 			this.errorMessage = undefined;
@@ -342,6 +383,20 @@ export class SubagentsStatusComponent implements Component {
 		const body: string[] = [];
 		body.push(...detailRows(`${run.id} | ${statusColor(this.theme, run.state)} | ${run.mode} | ${stepLabel} | ${duration}`, width, innerW, this.theme));
 		if (activity) body.push(...detailRows(activity, width, innerW, this.theme));
+		if (!run.asyncDir) {
+			// Synthetic foreground row: no on-disk artifacts to read.
+			body.push(row("", width, this.theme));
+			body.push(row(this.theme.fg("accent", "Steps"), width, this.theme));
+			body.push(...this.renderStepRows(run, width, innerW, { wrap: true }));
+			body.push(row("", width, this.theme));
+			body.push(row(this.theme.fg("dim", "  Foreground (sync) run; no async artifacts on disk."), width, this.theme));
+			return [
+				renderHeader(`Subagent Run ${run.id.slice(0, 8)}`, width, this.theme),
+				...body.slice(0, DETAIL_VIEWPORT_HEIGHT),
+				row("", width, this.theme),
+				renderFooter(" esc summary  q close ", width, this.theme),
+			];
+		}
 		body.push(row("", width, this.theme));
 		body.push(row(this.theme.fg("accent", "Steps"), width, this.theme));
 		body.push(...this.renderStepRows(run, width, innerW, { wrap: true }));
