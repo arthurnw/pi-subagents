@@ -111,7 +111,7 @@ describe("SubagentsStatusComponent", () => {
 		}
 	});
 
-	it("opens a read-only detail view and returns to the summary with escape", () => {
+	it("opens a read-only detail view and returns to the summary with backspace, then closes with escape", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-status-detail-"));
 		try {
 			const run = createRun("run-detail", "running", root);
@@ -149,7 +149,7 @@ describe("SubagentsStatusComponent", () => {
 				assert.match(detail, /asyncDir:/);
 				assert.match(detail, /outputFile:/);
 				assert.match(detail, /sessionFile:/);
-				assert.match(detail, /read-only detail/);
+				assert.match(detail, /bs back/);
 				assert.match(detail, /↓ \d+ more/);
 				assert.equal(renderRequests, 1);
 
@@ -159,11 +159,14 @@ describe("SubagentsStatusComponent", () => {
 				assert.match(scrolledDetail, /runLog:/);
 				assert.match(scrolledDetail, /↑ \d+ more/);
 
-				component.handleInput("\u001b");
+				component.handleInput("\u007f");
 				const summary = component.render(120).join("\n");
 				assert.match(summary, /Subagents Status/);
 				assert.match(summary, /enter detail/);
 				assert.equal(closed, false);
+
+				component.handleInput("\u001b");
+				assert.equal(closed, true);
 			} finally {
 				component.dispose();
 			}
@@ -228,7 +231,7 @@ describe("SubagentsStatusComponent", () => {
 			assert.match(detail, /Selected run is no longer available\./);
 			assert.doesNotMatch(detail, /Subagent Run run-b/);
 
-			component.handleInput("\u001b");
+			component.handleInput("\u007f");
 			const summary = component.render(120).join("\n");
 			assert.match(summary, /Selected: run-b/);
 		} finally {

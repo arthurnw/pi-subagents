@@ -380,12 +380,12 @@ export class SubagentsStatusComponent implements Component {
 			renderHeader(`Subagent Run ${run.id.slice(0, 8)}`, width, this.theme),
 			...visibleBody,
 			scrollInfo ? row(this.theme.fg("dim", scrollInfo), width, this.theme) : row("", width, this.theme),
-			renderFooter(" ↑↓ scroll  esc summary  q close  read-only detail ", width, this.theme),
+			renderFooter(" ↑↓ scroll  bs back  esc close  q close ", width, this.theme),
 		];
 	}
 
 	handleInput(data: string): void {
-		if (this.screen === "detail" && matchesKey(data, "escape")) {
+		if (this.screen === "detail" && matchesKey(data, "backspace")) {
 			this.screen = "list";
 			this.detailRunId = undefined;
 			this.tui.requestRender();
@@ -451,7 +451,7 @@ export class SubagentsStatusComponent implements Component {
 			return [
 				renderHeader("Subagent Run", w, this.theme),
 				row(this.theme.fg("warning", "Selected run is no longer available."), w, this.theme),
-				renderFooter(" esc summary  q close ", w, this.theme),
+				renderFooter(" esc close  q close ", w, this.theme),
 			];
 		}
 		const lines: string[] = [renderHeader("Subagents Status", w, this.theme)];
